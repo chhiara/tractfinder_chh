@@ -14,8 +14,87 @@ from mrtrix3 import app
 
 import gc
 
-# Compute and save deformation from file paths
+# Compute and save deformation from file paths
 # Everything handled in mrtrix3 mif format
+def entry_point_chh(tumour_mask, brain_mask, out_path, def_field_forw=None, **kwargs):
+  tumour = load_mrtrix(tumour_mask)
+  brain  = load_mrtrix(brain_mask)
+
+  imshape = brain.data.shape
+  assert tumour.data.shape == imshape, "Dimension mismatch"
+
+  tumour = np.logical_and(tumour.data, brain.data)
+
+  save_lookup = kwargs['save_lookup']
+  # Load Db/Dt lookup arrays if available
+  Dt, Db = None, None
+  if save_lookup:
+    DbDt_path = os.path.join(save_lookup, 'DbDt.npz')
+    if os.path.exists(DbDt_path):
+      lookups_zipped = np.load(DbDt_path)
+      Db, Dt = lookups_zipped['Db'], lookups_zipped['Dt']
+      try:
+        s = tuple(lookups_zipped['shape'])
+        if not (s == imshape and np.prod(imshape) == Db.size == Dt.size):
+          Dt, Db = None, None
+      except KeyError:
+        if not np.prod(imshape) == Db.size == Dt.size:
+          Dt, Db = None, None
+      finally:
+        if Dt is None or Db is None:
+          app.warn("Precomputed Db and Dt don't match input brain mask grid. They will be recomputed and overwritten")
+    else:
+      # TODO: Deprecate individual file support
+      Dt_path = os.path.join(save_lookup, 'Dt.npy')
+      Db_path = os.path.join(save_lookup, 'Db.npy')
+      if os.path.exists(Dt_path): Dt = np.load(Dt_path)
+      if os.path.exists(Db_path): Db = np.load(Db_path)
+      try:
+        if not np.prod(imshape) == Db.size == Dt.size:
+          Dt, Db = None, None
+          app.warn("Precomputed Db and Dt don't match input brain mask grid. They will be recomputed and overwritten")
+      except AttributeError:
+        Dt, Db = None, None
+
+  #prepare the outputs
+  l = kwargs.get('expon')
+  k = 'exponential ' if l else 'linear'
+  if l == -1: k += '(adaptive)'
+  elif kwargs.get('expon_const'): k += f'(lambda = {l})'
+  elif l: k += f'(adaptive, lambda_min = {l})'
+ 
+  if def_field_forw is not None:
+      #if output_forward is provided 
+      #compute both forward and inverse def field
+
+      kwargs["mode"]="both"
+      D_forward, D = compute_radial_deformation(imshape, tumour, brain.data, Db=Db, Dt=Dt, **kwargs)
+      
+      #save forward deformation field
+      out = Image.empty_as(brain)
+      out.comments = [f"scale factor: {kwargs.get('squish', 1)}", f"deformation factor: {k}"]
+      out.data = (np.hstack((out.vox * D_forward, np.ones((max(D_forward.shape), 1))))
+                  @ out.transform.T)[:,:3].reshape(*imshape, 3)
+      save_mrtrix(def_field_forw, out)
+      
+  else:
+      # All defaults - compute inverse deformation    
+      D = compute_radial_deformation(imshape, tumour, brain.data, Db=Db, Dt=Dt, **kwargs)
+  
+  #--save inverse deformation field (always computed)
+  
+  # Black magic that apparently I wrote
+  # Convert deformation values from voxel coords to scanner coordinates (mm)
+  # and reshape to voxel array
+  out = Image.empty_as(brain)
+  out.comments = [f"scale factor: {kwargs.get('squish', 1)}", f"deformation factor: {k}"]
+  out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
+              @ out.transform.T)[:,:3].reshape(*imshape, 3)
+
+  save_mrtrix(out_path, out)
+
+
+
 def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
   tumour = load_mrtrix(tumour_mask)
   brain  = load_mrtrix(brain_mask)
@@ -67,7 +146,7 @@ def entry_point(tumour_mask, brain_mask, out_path, **kwargs):
   out = Image.empty_as(brain)
   out.comments = [f"scale factor: {kwargs.get('squish', 1)}", f"deformation factor: {k}"]
   # Black magic that apparently I wrote
-  # Convert deformation values from voxel coords to scanner coordinates (mm)
+  # Convert deformation values from voxel coords to scanner coordinates (mm)
   # and reshape to voxel array
   out.data = (np.hstack((out.vox * D, np.ones((max(D.shape), 1))))
               @ out.transform.T)[:,:3].reshape(*imshape, 3)
@@ -98,7 +177,7 @@ def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
     # Convert to pyvista mesh object
     mesh = pv.PolyData(V, np.c_[3*np.ones((F.shape[0],1)), F].astype(int))
 
-    # Determine corresponding reduction if target faces given
+    # Determine corresponding reduction if target faces given
     if target_nfaces:
         target_reduction = (mesh.n_faces - target_nfaces) / mesh.n_faces
 
@@ -119,7 +198,7 @@ def surf_from_vol(vol, sigma=1, target_reduction=0.8, target_nfaces=None):
 
 # Tage a binary volume and simplify it in someway.
 # Two possible simplifications can be made (or combined):
-# choosing the largest connected region, or converting the
+# choosing the largest connected region, or converting the
 # volume into it's convex hull.
 def simplify_vol(vol, convex_hull=True, largest_object=True):
     # TODO: Docstring
@@ -144,7 +223,7 @@ def simplify_vol(vol, convex_hull=True, largest_object=True):
 
 
 # The mother function! Compute radial deformation field from
-# a brain and tumour mask
+# a brain and tumour mask
 def compute_radial_deformation(imshape, tumour_mask, brain_mask,
                                save_lookup=None,
                                Dt=None, Db=None, S_override=None,
