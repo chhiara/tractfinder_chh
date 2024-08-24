@@ -1,0 +1,15 @@
+name: tractfinder
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - mrtrix3::mrtrix3
+  - anaconda::scipy
+  - scikit-image
+  - aramislab::ants
+  - conda-forge::nibabel
+  - conda-forge::ipython
+  - pandas
+  - numba
+  - numpy=1.21.2
+prefix: /home/chiara/miniconda3/envs/tractfinder
