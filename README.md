@@ -2,6 +2,9 @@
 
 A simple tract segmentation technique.
 
+# Improvements by chhiara:
+* possibility to output forward warp
+* Bug solved:  the convertion  in spherical coordinates centred in tumor-center, of P (point to deformate) when considering the center of the tumor it-self, does not produce np.nan anymore, that would have produced subsequent error!  (see function c2s() in utils.py )
 ## Installation and setup
 
 ### Dependencies
