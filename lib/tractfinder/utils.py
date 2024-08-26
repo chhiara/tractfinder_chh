@@ -23,9 +23,30 @@ def c2s(*args):
         S = np.zeros(C.shape)
 
         S[:,0] = np.sqrt(np.sum(C**2, axis=1))
+    
         S[:,1] = np.arccos(C[:,2]/S[:,0])
-        S[:,2] = np.arctan2(C[:,1], C[:,0])
 
+        #by chhiara -- start
+        #in the case S[:,0]==0, i.e. I am considering the point in the center of the origin od the spherical coordinates,
+        #that has has R=0 -> distance ==0 from the center of the origin of the system of spherical coordinates 
+        #for example this happens when I am converting the points to deformate P in the spherical coordinates centred in the tumor center.
+        #Among the points P there is the center of the tumor and this will have R=0
+        #---
+        #This cause problems in the computation of the angles S[:,1]  since:
+        # C[:,2]/S[:,0] -> creates a number np.inf  (division by zero)
+        # np.arccos(np.inf) -> creates a nan  that will create other idiosyncrasies afterward
+        #Solution: since the center coordinate point is associated to every angle, let's define a mock angle to subtitute to nan: 0.1
+        if (np.isnan(S[:,1])).any():
+            print(f" {np.sum(np.isnan(S[:,1]))} nan detected in S[:,1] in utils.c2s function. Let's substitute it with 0.1")
+            #check that nan value is only where the R=0
+            assert np.where(np.isnan(S[:,1])) == np.where(S[:,0]==0), "I have nan, that are not in correspondance of a Radius=0 (in the center of the spheric coordinates origin)"
+            
+            S[:,1][np.isnan(S[:,1])]=0.1
+
+        #by chhiara -- end
+
+        S[:,2] = np.arctan2(C[:,1], C[:,0])
+        
         return S
     # Arguments supplied individually as 1D X, Y, Z arrays
     elif len(args)==3:
